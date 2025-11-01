@@ -1,0 +1,6 @@
+# This is Git's per-user configuration file.
+[user]
+	email = mtamargo122@gmail.com
+# Please adapt and uncomment the following lines:
+#	name = Miguel Tamargo
+#	email = mtamargo122@gmail.com
