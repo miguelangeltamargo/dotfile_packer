@@ -22,6 +22,14 @@
 SCRIPT_DIR="$(pwd)"
 DOTFILES_DIR="$SCRIPT_DIR/dotfiles_backup"
 
+# Obsidian Vault candidate locations (relative to $HOME)
+OBSIDIAN_VAULT_LOCATIONS=(
+  "Documents/Obsidian Vault"
+  "Library/Mobile Documents/com~apple~CloudDocs/Notes/Obsidian Vault"
+)
+OBSIDIAN_CONFIG_BACKUP_DIR="$DOTFILES_DIR/obsidian_config"
+OBSIDIAN_VAULT_SOURCE_FILE="$DOTFILES_DIR/obsidian_vault_location.txt"
+
 # List of files and directories to manage
 # These are CUSTOM configs only - frameworks should be installed fresh
 CONFIG_ITEMS=(
@@ -141,6 +149,106 @@ wipe_backup() {
   fi
 }
 
+# Function to backup Obsidian .obsidian config folder from within the vault
+backup_obsidian_config() {
+  print_message "$BLUE" "\n=== Backing Up Obsidian Configuration ==="
+
+  local found_vault_path=""
+
+  for rel_path in "${OBSIDIAN_VAULT_LOCATIONS[@]}"; do
+    local candidate="$HOME/$rel_path"
+    if [ -d "$candidate" ]; then
+      found_vault_path="$candidate"
+      print_message "$GREEN" "✓ Found Obsidian Vault at: $candidate"
+      break
+    else
+      print_message "$YELLOW" "⊘ Not found at: $candidate"
+    fi
+  done
+
+  if [ -z "$found_vault_path" ]; then
+    print_message "$YELLOW" "⊘ Obsidian Vault not found in any known location, skipping."
+    return
+  fi
+
+  local obsidian_config_source="$found_vault_path/.obsidian"
+  if [ ! -d "$obsidian_config_source" ]; then
+    print_message "$YELLOW" "⊘ .obsidian config folder not found in vault, skipping."
+    return
+  fi
+
+  mkdir -p "$OBSIDIAN_CONFIG_BACKUP_DIR"
+
+  print_message "$YELLOW" "Backing up .obsidian config from: $obsidian_config_source"
+  if rsync -av --progress "$obsidian_config_source/" "$OBSIDIAN_CONFIG_BACKUP_DIR/" >/dev/null 2>&1; then
+    # Save the vault location so restore knows where it came from
+    echo "$found_vault_path" > "$OBSIDIAN_VAULT_SOURCE_FILE"
+    print_message "$GREEN" "✓ Obsidian config backed up successfully"
+    print_message "$BLUE" "  From: $obsidian_config_source"
+  else
+    print_message "$RED" "✗ Failed to backup Obsidian config"
+  fi
+  echo ""
+}
+
+# Function to restore Obsidian .obsidian config folder to the chosen vault
+restore_obsidian_config() {
+  print_message "$BLUE" "\n=== Restoring Obsidian Configuration ==="
+
+  if [ ! -d "$OBSIDIAN_CONFIG_BACKUP_DIR" ]; then
+    print_message "$YELLOW" "⊘ No Obsidian config backup found, skipping."
+    return
+  fi
+
+  # Show the original source if recorded
+  if [ -f "$OBSIDIAN_VAULT_SOURCE_FILE" ]; then
+    local original_source
+    original_source=$(cat "$OBSIDIAN_VAULT_SOURCE_FILE")
+    print_message "$YELLOW" "Original vault location: $original_source"
+  fi
+
+  echo ""
+  print_message "$GREEN" "Which vault would you like to restore the Obsidian config to?"
+  local i=1
+  for rel_path in "${OBSIDIAN_VAULT_LOCATIONS[@]}"; do
+    echo "  [$i] $HOME/$rel_path"
+    ((i++))
+  done
+  echo "  [S] Skip - do not restore Obsidian config"
+  echo ""
+  read -p "Enter your choice [1-${#OBSIDIAN_VAULT_LOCATIONS[@]}/S]: " config_choice
+
+  if [[ "$config_choice" =~ ^[Ss]$ ]]; then
+    print_message "$YELLOW" "Skipping Obsidian config restore."
+    return
+  fi
+
+  local idx=$((config_choice - 1))
+  if [[ "$config_choice" =~ ^[0-9]+$ ]] && [ "$idx" -ge 0 ] && [ "$idx" -lt "${#OBSIDIAN_VAULT_LOCATIONS[@]}" ]; then
+    local restore_vault_path="$HOME/${OBSIDIAN_VAULT_LOCATIONS[$idx]}"
+  else
+    print_message "$RED" "Invalid choice. Skipping Obsidian config restore."
+    return
+  fi
+
+  local restore_dest="$restore_vault_path/.obsidian"
+
+  if [ ! -d "$restore_vault_path" ]; then
+    print_message "$RED" "✗ Vault not found at: $restore_vault_path"
+    return
+  fi
+
+  print_message "$YELLOW" "Restoring Obsidian config to: $restore_dest"
+  mkdir -p "$restore_dest"
+
+  if rsync -av --progress "$OBSIDIAN_CONFIG_BACKUP_DIR/" "$restore_dest/" >/dev/null 2>&1; then
+    print_message "$GREEN" "✓ Obsidian config restored successfully to: $restore_dest"
+  else
+    print_message "$RED" "✗ Failed to restore Obsidian config"
+  fi
+  echo ""
+}
+
 # Function to backup files FROM home to the dotfiles directory
 backup_dotfiles() {
   print_message "$BLUE" "\n=== Starting Backup Process ==="
@@ -189,6 +297,9 @@ backup_dotfiles() {
     fi
     echo ""
   done
+
+  # Backup Obsidian config
+  backup_obsidian_config
 
   # Clean up .git directories from backup
   cleanup_git_dirs
@@ -269,6 +380,9 @@ restore_dotfiles() {
     echo ""
   done
 
+  # Restore Obsidian config
+  restore_obsidian_config
+
   print_message "$GREEN" "\n=== Restore Complete ==="
   print_message "$GREEN" "✓ Successfully restored: $restore_count items"
   print_message "$YELLOW" "⊘ Skipped (not found in backup): $skip_count items"
@@ -299,6 +413,22 @@ show_config() {
       ((found++))
     else
       echo "  ⊘ $item (not found)"
+      ((missing++))
+    fi
+  done
+
+  # Check for Obsidian config
+  print_message "$YELLOW" "\nObsidian Configuration:"
+  local obsidian_found=0
+  for rel_path in "${OBSIDIAN_VAULT_LOCATIONS[@]}"; do
+    local vault_path="$HOME/$rel_path"
+    local obsidian_config="$vault_path/.obsidian"
+    if [ -d "$obsidian_config" ]; then
+      echo "  ✓ $rel_path/.obsidian"
+      ((obsidian_found++))
+      ((found++))
+    else
+      echo "  ⊘ $rel_path/.obsidian (not found)"
       ((missing++))
     fi
   done
